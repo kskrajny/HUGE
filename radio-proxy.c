@@ -113,7 +113,7 @@ void *serve_clients_request(void *data)
     if(recvfrom(listener_sock, &pro, sizeof(struct protocol), 0,(struct sockaddr *)&sin_client, &addr_size) < 0)
       continue;
     /* Nie przyjmuje złych komunikatów ani adresóœ zerowych */
-    if(ntohl(sin_client.sin_addr.s_addr) == 0)
+    if(ntohl(sin_client.sin_addr.s_addr) == 0 || pro.len != 0)
       continue;
     /* zmiana na zwykły porządek bajtów */
     pro.len = ntohs(pro.len);
