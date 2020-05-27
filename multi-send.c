@@ -95,7 +95,10 @@ int main(int argc, char *argv[]) {
           if(fds[0].revents & POLLIN) {
             rcva_len = (socklen_t) sizeof(local_address);
             recvfrom(sock, &pro, sizeof(struct protocol), 0, (struct sockaddr *) &local_address, &rcva_len);
-            if (inet_ntop(AF_INET, &local_address.sin_addr, peeraddr, BUF_SIZE) == NULL)
+            /* zmiana na hostowy porządek bajtów */
+            pro.len = ntohs(pro.len);
+            pro.type = ntohs(pro.type);
+            if(inet_ntop(AF_INET, &local_address.sin_addr, peeraddr, BUF_SIZE) == NULL)
                 syserr("inet_ntop");
             if(pro.type == 2)
                 printf("Radio: %s\n", pro.buf);
@@ -105,6 +108,9 @@ int main(int argc, char *argv[]) {
           if(fds[1].revents & POLLIN) {
             memset(pro.buf, 0, BUF_SIZE);
             scanf("%hd", &pro.type);
+            /* zmiana na sieciowy porządek bajtów */
+            pro.len = htons(pro.len);
+            pro.type = htons(pro.type); 
             if(sendto(sock, &pro, sizeof(struct protocol), 0, (struct sockaddr *) &remote_address, sizeof(remote_address)) < 0)
               syserr("write");
           }

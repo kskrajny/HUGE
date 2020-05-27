@@ -46,7 +46,6 @@ void get_input(struct input* input, int* argc_ptr, char ***argv_ptr) {
   }
   if(input->host == -1 ||
      input->resource == -1 ||
-     input->port == -1 || 
-     input->client_port == -1)
+     input->port == -1)
     fatal("Bad parameters!");
 }

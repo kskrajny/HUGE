@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <inttypes.h>
+#include <assert.h>
 
 #include "input.h"
 
@@ -46,10 +47,12 @@ struct input input;
 char radio_name[BUF_SIZE];
 char *str;
 unsigned long count_audio;
-uint8_t count_data;
+uint16_t count_data;
 unsigned long max_audio;
-uint8_t max_data;
+uint16_t max_data;
 int start;
+int meta;
+int modeA;
 
 void init_clients() {
   memset(&clients, 0, sizeof(clients));
@@ -112,9 +115,11 @@ void *serve_clients_request(void *data)
     if(recvfrom(listener_sock, &pro, sizeof(struct protocol), 0,(struct sockaddr *)&sin_client, &addr_size) < 0)
       continue;
     /* Nie przyjmuje złych komunikatów ani adresóœ zerowych */
-    if(ntohl(sin_client.sin_addr.s_addr) == 0)
+    if(ntohl(sin_client.sin_addr.s_addr) == 0 || pro.len != 0)
       continue;
-    fprintf(stderr, "GOT MESS TYPE %hd\n", pro.type);
+    /* zmiana na zwykły porządek bajtów */
+    pro.len = ntohs(pro.len);
+    pro.type = ntohs(pro.type);
     switch(pro.type) {
       case 1: // DISCOVER
         /* Sprawdzenie, czy klient jest już obsługiwany */
@@ -134,6 +139,9 @@ void *serve_clients_request(void *data)
         memset(pro.buf, 0, BUF_SIZE);
         snprintf(pro.buf, BUF_SIZE, "%s", radio_name);
         pro.len = strlen(radio_name);
+        /* zmiana na sieciowy porządek bajtów */
+        pro.len = htons(pro.len);
+        pro.type = htons(pro.type);
         sendto(listener_sock, &pro, sizeof(struct protocol), 0, (struct sockaddr *)&sin_client, addr_size);
         /* Uzupełnienie danych w slocie klienta */
         clients[cl].time = time(NULL);
@@ -154,6 +162,7 @@ void *serve_clients_request(void *data)
 }
 
 void a_read_cb (struct bufferevent *bev, void *arg) {
+  size_t size;
 beg:  
   if(start) {
     /* Wczytywanie treści radia */
@@ -163,36 +172,51 @@ beg:
     if(count_audio < max_audio || max_audio == 0) {
       /* tresć audio */
       pro.type = 4;
-      pro.len = (BUF_SIZE < max_audio - count_audio || 
+      size = (BUF_SIZE < max_audio - count_audio || 
                  max_audio == 0) ? BUF_SIZE : max_audio - count_audio;
-      count_audio += pro.len;
     } else {
       /* metadane */
       pro.type = 6;
       if(count_data == 0){
         bufferevent_read(bev, pro.buf, 1);
-        max_data = (uint8_t)pro.buf[0];
+        max_data = (uint16_t)16*(uint8_t)pro.buf[0];
         memset(pro.buf, 0, BUF_SIZE);
       }
-      pro.len = (BUF_SIZE < max_data - count_data) ? BUF_SIZE : max_data - count_data;
+      size = (BUF_SIZE < max_data - count_data) ? BUF_SIZE : max_data - count_data;
+    }
+    /* wczytanie wiadomości */
+    size = bufferevent_read(bev, pro.buf, size);
+    pro.len = size;
+    /* aktualizacja liczników */
+    if(pro.type == 4) {
+      count_audio += pro.len;
+    } else {
       count_data += pro.len;
       if(count_data == max_data) {
         count_audio = 0;
         count_data = 0;
       }
     }
-    /* wczytanie wiadomości */
-    bufferevent_read(bev, pro.buf, (size_t)pro.len);
-    /* iteracja po klientach w celu wysłania danych */
-    for(int i=0;i<MAX_CLIENTS;i++) {
-      if(clients[i].time != 0) {
-        /* sprawdzenie czy klient jest aktywny */
-        if(time(NULL) - clients[i].time < client_timeout)
-          sendto(listener_sock, &pro, sizeof(struct protocol), 0,
-                 (struct sockaddr *)&clients[i].addr, sizeof(clients[i].addr));
-         else
-          memset(&clients[i], 0, sizeof(struct clients));
+    if(!modeA) {
+      /* zmiana na porządek sieciowy */
+      pro.len = htons(pro.len);
+      pro.type = htons(pro.type);
+      /* iteracja po klientach w celu wysłania danych */
+      for(int i=0;i<MAX_CLIENTS;i++) {
+        if(clients[i].time != 0) {
+          /* sprawdzenie czy klient jest aktywny */
+          if(time(NULL) - clients[i].time < client_timeout)
+            sendto(listener_sock, &pro, sizeof(struct protocol), 0,
+                   (struct sockaddr *)&clients[i].addr, sizeof(clients[i].addr));
+          else
+            memset(&clients[i], 0, sizeof(struct clients));
+        }
       }
+    } else {
+      if(pro.type == 4)
+        write(STDOUT_FILENO, pro.buf, pro.len);
+      else 
+        write(STDERR_FILENO, pro.buf, pro.len);
     }
   } else {
     /* wczytywanie danych o radiu */
@@ -209,6 +233,7 @@ beg:
       if(max_audio == 0) {
         if(strstr(str, "icy-metaint:") != NULL){
           max_audio = atoi(str+12);
+          if(!meta) syserr("Error, unwanted metadata.");
         }
       }
       /* sprawdzenie czy wczytano juz linijke \r\n\ */
@@ -236,8 +261,8 @@ void an_event_cb (struct bufferevent *bev, short what, void *arg) {
 void sighandler(int sig) {
   if(str != NULL) free(str);
   event_base_loopbreak(base);
-  event_base_free(base);
   bufferevent_free(bev);
+  event_base_free(base);
   close(listener_sock);
 }
 
@@ -246,6 +271,7 @@ int main(int argc, char *argv[])
 {
 /* sprawdzamy parametry */
   get_input(&input, &argc, &argv);
+  modeA = (input.client_port == -1);
 
 /* obsługa sygnału Ctrl+C */
   struct sigaction action;
@@ -260,6 +286,7 @@ int main(int argc, char *argv[])
   if (sigaction (SIGINT, &action, 0) == -1)
     syserr("sigaction");
 
+if(!modeA) {
 /* Wątek dla klientów */
   pthread_attr_t attr;
   struct listener_pack multi;
@@ -267,13 +294,15 @@ int main(int argc, char *argv[])
   multi.port = atoi(argv[input.client_port]);
   if(pthread_attr_init(&attr) != 0)
     syserr("attr_init");
-  if(pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE) != 0)
+  if(pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED) != 0)
     syserr("setdetach");
   if(pthread_create(&listener, &attr, serve_clients_request, &multi) != 0)
     syserr("create");
 
 /* timeout dla klientów */
   client_timeout = (input.client_timeout == -1) ? 5 : atoi(argv[input.client_timeout]);
+  if(client_timeout < 1) syserr("Error, bad timeout.");
+}
 
 /* event base */ 
   base = event_base_new();
@@ -293,6 +322,7 @@ int main(int argc, char *argv[])
 
   struct timeval timeout_read;
   timeout_read.tv_sec = (input.timeout == -1) ? 5 : atoi(argv[input.timeout]);
+  if(timeout_read.tv_sec < 1) syserr("Error, bad timeout.");
   timeout_read.tv_usec = 0;
   bufferevent_set_timeouts(bev, &timeout_read, NULL);
 
@@ -320,7 +350,6 @@ int main(int argc, char *argv[])
 /* Wysłanie żądania do serwera */
   char buf[BUF_SIZE];
   memset(buf, 0 , BUF_SIZE);
-  int meta;
   if(input.meta == -1) {
     meta = 0;
   } else if (strstr(argv[input.meta], "yes") && strlen(argv[input.meta]) == 3) {
