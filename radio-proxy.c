@@ -50,6 +50,7 @@ unsigned long count_audio;
 uint16_t count_data;
 unsigned long max_audio;
 uint16_t max_data;
+int status;
 int start;
 int meta;
 int modeA;
@@ -148,7 +149,6 @@ void *serve_clients_request(void *data)
         /* Odszukanie slotu klienta */
         cl = get_matching_slot(&sin_client);
         if(cl == -1) {
-          fprintf(stderr, "Brak klienta w bazie\n");
           break;
         }
         /* Zaaktualizowanie czasu ostatniej aktywności klienta */
@@ -220,6 +220,11 @@ beg:
     str = evbuffer_readln(bufferevent_get_input(bev), NULL, EVBUFFER_EOL_CRLF_STRICT); 
     /* dane do przesłania */
     while (str != NULL) {
+      /* sprawdzenie statusu */
+      if(status == 0 && strstr(str, "200 OK") == NULL)
+        syserr("Error, bad status");
+      else
+        status = 1;
       /* zapisanie nazwy radia */
       if(strlen(radio_name) == 0) {
         if(strstr(str, "icy-name:") != NULL){
@@ -311,6 +316,7 @@ if(!modeA) {
   max_data = 0;
   max_audio = 0;
   start = 0;
+  status = 0;
 
   bev = bufferevent_socket_new(base, -1, BEV_OPT_CLOSE_ON_FREE);
   if (!bev)

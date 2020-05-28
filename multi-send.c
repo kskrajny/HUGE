@@ -101,13 +101,16 @@ int main(int argc, char *argv[]) {
             if(inet_ntop(AF_INET, &local_address.sin_addr, peeraddr, BUF_SIZE) == NULL)
                 syserr("inet_ntop");
             if(pro.type == 2)
-                printf("Radio: %s\n", pro.buf);
+                fprintf(stderr, "Radio: %s\n", pro.buf);
             if(pro.type == 6)
-                printf("METALEN: %d\n", pro.len);
+                fprintf(stderr, "METALEN: %d\n", pro.len);
+            if(pro.type == 4)
+                fprintf(stderr, "AUDIO\n");
           }
           if(fds[1].revents & POLLIN) {
             memset(pro.buf, 0, BUF_SIZE);
             scanf("%hd", &pro.type);
+            pro.len = 0;
             /* zmiana na sieciowy porządek bajtów */
             pro.len = htons(pro.len);
             pro.type = htons(pro.type); 
