@@ -124,15 +124,12 @@ void *serve_clients_request(void *data)
       case 1: // DISCOVER
         /* Sprawdzenie, czy klient jest już obsługiwany */
         cl = get_matching_slot(&sin_client);
-        if(cl != -1) {
-          fprintf(stderr, "Klient jest obsługiwany\n");
-          break;
-        }
-        /* Wyszukiwanie wolnego slotu dla klienta */
-        cl = get_client_slot();
         if(cl == -1) {
-          fprintf(stderr, "Zbyt dużo klientów\n");
-          break;
+          /* Wyszukiwanie wolnego slotu dla klienta */
+          cl = get_client_slot();
+          if(cl == -1) {
+            break;
+          }
         }
         /* Wysłanie komunikatu IAM */
         pro.type = 2;
@@ -143,7 +140,7 @@ void *serve_clients_request(void *data)
         pro.len = htons(pro.len);
         pro.type = htons(pro.type);
         sendto(listener_sock, &pro, sizeof(struct protocol), 0, (struct sockaddr *)&sin_client, addr_size);
-        /* Uzupełnienie danych w slocie klienta */
+        /* Aktualizacja danych w slocie klienta */
         clients[cl].time = time(NULL);
         mempcpy(&clients[cl].addr, &sin_client, sizeof(struct sockaddr_in));
         break;
